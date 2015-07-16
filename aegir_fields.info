@@ -1,0 +1,5 @@
+name = Aegir Fields
+description = Transfers values from hostmaster site nodes into the sites themselves for additional contextual information.
+package = Hosting
+dependencies[] = hosting
+core = 6.x

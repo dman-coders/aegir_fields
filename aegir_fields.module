@@ -1,0 +1,5 @@
+<?php 
+/**
+ * @file
+ * Module file is required, but all the goods are in the drush inc.
+ */
