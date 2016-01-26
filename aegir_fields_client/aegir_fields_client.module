@@ -1,0 +1,202 @@
+<?php
+/**
+ * @file
+ * Expose conf settings from aegir_fields as tokens in the site.
+ *
+ * Designed to work with properties that are passed from an aegir hostmaster
+ * using Aegir_fields module, and re-use them on a child site.
+ *
+ * The parent hostmaster may have provided an array in settings.php .
+ *
+ * @code
+ * $conf['aegir_fields'] = array(
+ *   'field_rss_url' => 'http://example.com/feed.rss',
+ * );
+ * /@code
+ *
+ * These values will become available as a token,
+ * eg via token_filter as
+ *   [aegir_fields:field_rss_url]
+ */
+
+/**
+ * Implements hook_token_info().
+ */
+function aegir_fields_client_token_info() {
+  // What tokens we provide is totally defined by what tokens we have :-,
+  $aegir_fields = variable_get('aegir_fields', array());
+  $variable = array();
+  foreach ($aegir_fields as $name => $val) {
+    $variable[$name] = array(
+      'name' => $name,
+      'description' => $name,
+    );
+    $variable[$name . ':urlencoded'] = array(
+      'name' => $name,
+      'description' => $name,
+    );
+  }
+  return array(
+    'tokens' => array(
+      'aegir_fields' => $variable,
+    ),
+  );
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function aegir_fields_client_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  $replacements = array();
+  if ($type == 'aegir_fields') {
+    $aegir_fields = variable_get('aegir_fields', array());
+    foreach ($tokens as $name => $original) {
+      @list($token_name,$encoding) = explode(':', $name);
+      if (!empty($aegir_fields[$token_name])) {
+        // Allow additional encoding parameter.
+        switch($encoding) {
+          case 'urlencoded';
+            $replacements[$original] = urlencode($aegir_fields[$token_name]);
+            break;
+          default:
+            $replacements[$original] = $aegir_fields[$token_name];
+        }
+      }
+    }
+  }
+  return $replacements;
+}
+
+/**
+ * I can transfer content from the aegir fields to node fields.
+ *
+ * Implements hook_action_info()
+ */
+function aegir_fields_client_action_info() {
+  return array(
+    'aegir_fields_client_absorb_values_action' => array(
+      'label' => t('Aegir fields client: Copy field values into a node.'),
+      'type' => 'node',
+      'configurable' => FALSE,
+      'behavior' => array('changes_property'),
+      'triggers' => array('any'),
+    ),
+  );
+}
+
+/**
+ * Action function for aegir_fields_absorb_values_action.
+ *
+ * @param object $node
+ *   A node object provided by the associated trigger.
+ * @param array $context
+ *   Settings etc from VBO or caller.
+ */
+function aegir_fields_client_absorb_values_action(&$node, $context) {
+  $aegir_fields = variable_get('aegir_fields', array());
+  $wrapper = entity_metadata_wrapper('node', $node);
+  $properties = $wrapper->getPropertyInfo();
+  foreach ($aegir_fields as $field_name => $field_val) {
+    if (empty($field_val)) {
+      continue;
+    }
+    $strings = array(
+      '@type' => node_type_get_name($node),
+      '%title' => $node->title,
+      '%field_name' => $field_name,
+      '%field_val' => $field_val,
+    );
+    // Sparks/National Project only hack. Remove.
+    // SPECIAL exception just to get things working.
+    if ($field_name == 'field_mp') {
+      $wrapper->title = $field_val;
+    }
+    if (empty($properties[$field_name])) {
+      // Unknown field, not mapping to it.
+      drupal_set_message(t('Unknown field "%field_name". It is provided by aegir_fields, but is not available on the target content type "@type". Not mapping to it', $strings));
+      continue;
+    }
+    $strings['%field_type'] = $properties[$field_name]['type'];
+    // Always assume the value is an array, even if we were treating it as a
+    // string in the $conf earlier.
+    if (!is_array($field_val)) {
+      $field_val = array($field_val);
+    }
+
+    // BAH, we still have to do special cases for different field types.
+    switch ($properties[$field_name]['type']) {
+
+      case 'field_item_link':
+        foreach ($field_val as $delta => $link) {
+          // URLs get validated and the wrapper will break
+          // if we give it a wrong one. Pre-validate.
+          if (! $wrapper->${field_name}->url->validate($link)) {
+            drupal_set_message(t('%field_name %field_val is not a value %field_type. It could be that http:// is required.', $strings));
+            continue;
+          }
+          $wrapper->${field_name}->url = $link;
+        }
+        break;
+
+      // TODO: Other field types maybe.
+      default:
+
+        // I'd expected to be able to use arrays to set data, 
+        // But that's been failing for me. 
+        // Just loop and set them I guess.
+        foreach ($field_val as $delta => $single_val) { 
+          drupal_set_message(
+            t('Setting @type %title %field_type "%field_name" to "%field_val".', $strings)
+          );
+          $wrapper->${field_name}->set($single_val);
+        }
+    }
+
+    drupal_set_message(
+      t('Set @type %title %field_type "%field_name" to "%field_val".', $strings)
+    );
+  }
+  $wrapper->save();
+  // I'm saving here - I thought I should I trust my caller to do that?
+
+}
+
+/**
+ * Implements hook_node_operations().
+ *
+ * Passes a node operation through to an 'action'.
+ * As used in content management UI.
+ */
+function aegir_fields_client_node_operations() {
+  $operations['aegir_fields_client_absorb_values_multiple'] = array(
+    'label' => t('Copy Aegir field values into a node.'),
+    'callback' => 'aegir_fields_client_absorb_values_multiple',
+  );
+  return $operations;
+}
+/**
+ * Update the given node(s) with the aegir_fields values.
+ *
+ * A wrapper around the single aegir_fields_absorb_values_action() so we can
+ * run it from the content management UI.
+ *
+ * @param $nids
+ *   An array of node IDs.
+ * @param $op
+ *   Operation being performed on the nodes ('insert', 'update' or
+ *   'bulkupdate').
+ * @param $options
+ *   An optional array of additional options.
+ */
+function aegir_fields_client_absorb_values_multiple(array $nids, $op, array $options = array()) {
+  // We really never expect to be running this on more than one node,
+  // but it's not illegal.
+  $nodes = node_load_multiple($nids);
+  // Not used, but placeholders to keep the func signatures regular.
+  $context = array(
+    'settings' => $options,
+  );
+  foreach ($nodes as $node) {
+    aegir_fields_client_absorb_values_action($node, $context);
+  }
+}
