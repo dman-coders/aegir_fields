@@ -16,7 +16,7 @@ function aegir_fields_hosting_feature() {
   $features['aegir_fields'] = array(
     'title' => 'Aegir Fields',
     'description' => t('Transfer field values and tags to site instances'),
-    'status' => HOSTING_FEATURE_ENABLED,
+    'status' => HOSTING_FEATURE_DISABLED,
     'module' => 'aegir_fields',
     'group' => 'experimental',
   );
