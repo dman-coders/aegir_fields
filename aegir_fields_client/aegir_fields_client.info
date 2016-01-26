@@ -1,0 +1,4 @@
+name = Aegir Fields client
+description = Expose conf settings provided by aegir_fields as variables and tokens
+core = 7.x
+
